@@ -4,7 +4,7 @@ from enum import Enum
 from typing import overload
 
 import obstore
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ObjectMeta(BaseModel):
@@ -16,6 +16,17 @@ class ObjectMeta(BaseModel):
 
 
 class CopyRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "from": "path/to/source",
+                    "to": "path/to/destination",
+                },
+            ]
+        }
+    )
+
     from_: str = Field(alias="from", description="Source path")
     to: str = Field(description="Destination path")
     overwrite: bool = Field(
@@ -33,6 +44,16 @@ async def copy(store: obstore.store.ObjectStore, request: CopyRequest):
 
 
 class DeleteRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "paths": ["path/to/delete1", "path/to/delete2"],
+                },
+            ]
+        }
+    )
+
     paths: str | Sequence[str] = Field(
         description="The path or paths within the store to delete"
     )
@@ -43,6 +64,16 @@ async def delete(store: obstore.store.ObjectStore, request: DeleteRequest):
 
 
 class GetRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "path": "path/to/retrieve",
+                },
+            ]
+        }
+    )
+
     path: str = Field(description="The path or paths within the store to retrieve")
 
 
@@ -55,6 +86,16 @@ async def get(store: obstore.store.ObjectStore, request: GetRequest) -> GetRespo
 
 
 class HeadRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "path": "path/to/retrieve",
+                },
+            ]
+        }
+    )
+
     path: str = Field(description="The path or paths within the store to retrieve")
 
 
@@ -65,6 +106,7 @@ async def head(store: obstore.store.ObjectStore, request: HeadRequest) -> Object
 
 
 class ListRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": []})
     pass
 
 
@@ -77,6 +119,7 @@ async def _list(store: obstore.store.ObjectStore, request: ListRequest) -> ListR
 
 
 class PutRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"examples": []})
     pass
 
 
@@ -89,6 +132,17 @@ async def put(store: obstore.store.ObjectStore, request: PutRequest) -> PutRespo
 
 
 class RenameRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "from": "path/to/source",
+                    "to": "path/to/destination",
+                },
+            ]
+        }
+    )
+
     from_: str = Field(alias="from", description="Source path")
     to: str = Field(description="Destination path")
     overwrite: bool = Field(
@@ -118,17 +172,44 @@ class HttpMethod(str, Enum):
 
 
 class SignRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "method": "GET",
+                    "paths": ["path/to/file"],
+                    "expires_in": "PT1H",
+                },
+            ]
+        }
+    )
+
     method: HttpMethod
     paths: str | Sequence[str]
     expires_in: timedelta
 
 
 class SignResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "signed": "http://127.0.0.1:9000/bucket/path/to/file?X-Amz-Algorithm=AWS4-HMAC-SHA256&...&X-Amz-Signature=eb9c529b34ce3ebb2a896c5462f62959209055f838f26df77a94919b706449b0",
+                },
+            ]
+        }
+    )
+
     signed: str | Sequence[str]
 
 
+SignCapableStore = (
+    obstore.store.AzureStore | obstore.store.GCSStore | obstore.store.S3Store
+)
+
+
 async def sign(
-    store: obstore.store.AzureStore | obstore.store.GCSStore | obstore.store.S3Store,
+    store: SignCapableStore,
     request: SignRequest,
 ) -> SignResponse:
     paths = await obstore.sign_async(
@@ -141,7 +222,7 @@ async def sign(
     return SignResponse(signed=paths)
 
 
-class Store:
+class Executor:
     def __init__(self, store: obstore.store.ObjectStore):
         self.store: obstore.store.ObjectStore = store
 
@@ -167,13 +248,8 @@ class Store:
         await rename(self.store, request)
 
 
-class SignCapableStore(Store):
-    def __init__(
-        self,
-        store: obstore.store.AzureStore
-        | obstore.store.GCSStore
-        | obstore.store.S3Store,
-    ):
+class SignCapableExecutor(Executor):
+    def __init__(self, store: SignCapableStore):
         super().__init__(store)
 
         self._sign_capable_store = store
@@ -183,21 +259,15 @@ class SignCapableStore(Store):
 
 
 @overload
-def create_store(
-    store: obstore.store.AzureStore | obstore.store.GCSStore | obstore.store.S3Store,
-) -> SignCapableStore: ...
+def create_executor(store: SignCapableStore) -> SignCapableExecutor: ...
 
 
 @overload
-def create_store(store: obstore.store.ObjectStore) -> Store: ...
+def create_executor(store: obstore.store.ObjectStore) -> Executor: ...
 
 
-def create_store(
-    store: obstore.store.ObjectStore,
-) -> Store | SignCapableStore:
-    if isinstance(
-        store,
-        (obstore.store.AzureStore, obstore.store.GCSStore, obstore.store.S3Store),
-    ):
-        return SignCapableStore(store)
-    return Store(store)
+def create_executor(store: obstore.store.ObjectStore) -> Executor | SignCapableExecutor:
+    if isinstance(store, SignCapableStore):
+        return SignCapableExecutor(store)
+
+    return Executor(store)
