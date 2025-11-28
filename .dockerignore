@@ -10,3 +10,6 @@ devenv.*
 docker-compose.yaml
 Dockerfile
 justfile
+
+# Make sure uv works with the Python version in the Dockerfile
+.python-version
